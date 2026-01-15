@@ -25,10 +25,12 @@ LIMIT 10
 
 --Output the category of movies on which the most money was spent.
 
-SELECT  name, sum(replacement_cost) as total_cost
+SELECT  name, sum(amount) as total_cost
 FROM category
 JOIN film_category ON category.category_id = film_category.category_id
-JOIN film ON film_category.film_id = film.film_id
+JOIN inventory ON film_category.film_id = inventory.store_id
+JOIN rental ON inventory.inventory_id = rental.inventory_id
+JOIN payment ON rental.rental_id = payment.rental_id
 GROUP BY name
 ORDER BY total_cost DESC
 LIMIT 1
@@ -40,14 +42,14 @@ LIMIT 1
 SELECT title
 FROM film
 LEFT JOIN inventory ON film.film_id = inventory.film_id
-WHERE inventory IS NULL
+WHERE inventory_id IS NULL
 ;
 
 
 --Output the top 3 actors who have appeared the most in movies in the “Children” category. If several actors have the same number of movies, output all of them.
 
 WITH actor_counts AS (
-SELECT actor.actor_id, actor.first_name, actor.last_name, count(film_actor.film_id) AS count_film, DENSE_RANK() OVER (ORDER BY COUNT(film_actor.film_id) DESC) AS rank
+SELECT actor.actor_id, actor.first_name, actor.last_name, count(film_actor.film_id) AS count_film, ROW_NUMBER() OVER (ORDER BY COUNT(film_actor.film_id) DESC) AS row
 FROM actor
 JOIN film_actor ON actor.actor_id = film_actor.actor_id
 JOIN film_category ON film_actor.film_id = film_category.film_id 
@@ -55,9 +57,10 @@ JOIN category ON film_category.category_id = category.category_id
 WHERE category.name = 'Children'
 GROUP BY actor.actor_id, first_name, last_name
 )
+
 SELECT actor_id, first_name, last_name, count_film
 FROM actor_counts
-WHERE rank <= 2
+WHERE count_film >= (SELECT count_film FROM actor_counts WHERE row = 3)
 ORDER BY count_film DESC
 ;
 
@@ -77,7 +80,7 @@ ORDER BY inactive_customers DESC
 --Output the category of movies that have the highest number of total rental hours in the city (customer.address_id in this city) and that start with the letter “a”. Do the same for cities that have a “-” in them. Write everything in one query.
 
 WITH city_rental_hours AS (
-SELECT category.name AS category_name, city, sum(EXTRACT(EPOCH FROM (rental.return_date - rental.rental_date)) / 3600) AS total_hours
+SELECT category.name AS category_name, city, SUM(EXTRACT(EPOCH FROM (rental.return_date - rental.rental_date)) / 3600) AS total_hours
 FROM rental
 JOIN inventory ON rental.inventory_id = inventory.inventory_id
 JOIN film ON inventory.film_id = film.film_id
@@ -86,24 +89,24 @@ JOIN category ON film_category.category_id = category.category_id
 JOIN customer ON rental.customer_id = customer.customer_id
 JOIN address ON customer.address_id = address.address_id
 JOIN city ON address.city_id = city.city_id
-GROUP BY category_name, city
+WHERE rental.return_date IS NOT NULL
+GROUP BY category.name, city
 ),
 
 ranked_categories AS (
-SELECT category_name, sum(total_hours) AS total_hours, 'cities_starting_with_a' AS city_type, RANK() OVER (ORDER BY sum(total_hours) DESC) AS rank
+SELECT city, category_name, total_hours, ROW_NUMBER() OVER (PARTITION BY city ORDER BY total_hours DESC) AS rank
 FROM city_rental_hours
 WHERE city ILIKE 'a%'
-GROUP BY category_name
-    
+
 UNION ALL
-    
-SELECT category_name, sum(total_hours) AS total_hours, 'cities_with_dash' AS city_type, RANK() OVER (ORDER BY sum(total_hours) DESC) AS rank
+
+SELECT city, category_name, total_hours, ROW_NUMBER() OVER (PARTITION BY city ORDER BY total_hours DESC) AS rank
 FROM city_rental_hours
 WHERE city LIKE '%-%'
-GROUP BY category_name
 )
 
-SELECT city_type, category_name, total_hours
+SELECT city, category_name, total_hours
 FROM ranked_categories
 WHERE rank = 1
+ORDER BY city
 ;
